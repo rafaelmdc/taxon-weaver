@@ -110,7 +110,7 @@ Current indexes:
 Build from a local archive:
 
 ```bash
-python -m taxonomy_tools.cli build-db \
+taxonbridge build-db \
   --dump data/taxdump/taxdump.tar.gz \
   --db data/ncbi_taxonomy.sqlite
 ```
@@ -118,7 +118,7 @@ python -m taxonomy_tools.cli build-db \
 Download and build:
 
 ```bash
-python -m taxonomy_tools.cli build-db \
+taxonbridge build-db \
   --download \
   --dump data/taxdump/taxdump.tar.gz \
   --db data/ncbi_taxonomy.sqlite

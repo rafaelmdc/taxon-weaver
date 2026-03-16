@@ -10,6 +10,8 @@ into a larger application.
   reference database, inspect it, and resolve names from the CLI or Python.
 - [CLI reference](cli.md): command-by-command usage for the supported command
   surface.
+- [Django integration](django-integration.md): dependency and runtime
+  configuration pattern for a Django app.
 
 ## Core reference
 

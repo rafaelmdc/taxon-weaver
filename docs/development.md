@@ -6,8 +6,8 @@ later Django or Excel-specific layers.
 
 ## Principles
 
-- keep resolver logic inside `taxonomy_resolver/`
-- keep CLI code thin inside `taxonomy_tools/`
+- keep resolver logic inside `src/taxonomy_resolver/`
+- keep CLI code thin inside `src/taxonomy_tools/`
 - preserve stable request/response contracts
 - prefer deterministic behavior before fuzzy heuristics
 - treat human review as a first-class workflow outcome
@@ -15,8 +15,8 @@ later Django or Excel-specific layers.
 ## Repository structure
 
 ```text
-taxonomy_resolver/   Core package
-taxonomy_tools/      CLI command modules
+src/taxonomy_resolver/   Core package
+src/taxonomy_tools/      CLI command modules
 tests/               Unit and integration-style checks
 docs/                Project documentation
 ```
@@ -26,13 +26,13 @@ docs/                Project documentation
 Install in editable mode:
 
 ```bash
-python -m pip install -e .
+python -m pip install -e ".[dev]"
 ```
 
 Run all tests:
 
 ```bash
-python -m unittest
+python -m unittest discover -s tests
 ```
 
 Run the focused CLI tests:
@@ -44,7 +44,7 @@ python -m unittest tests.test_cli tests.test_build_ncbi_taxonomy_cli
 Compile-check the packages:
 
 ```bash
-python -m compileall taxonomy_resolver taxonomy_tools tests
+PYTHONPATH=src python -m compileall src tests
 ```
 
 ## Module responsibilities
@@ -83,7 +83,7 @@ If the change affects resolution semantics:
 ### New CLI command
 
 Add a new command module under `taxonomy_tools/` and register it from
-`taxonomy_tools/cli.py`. Keep business logic in the resolver package.
+`src/taxonomy_tools/cli.py`. Keep business logic in the resolver package.
 
 ### New transform rule
 
@@ -100,6 +100,6 @@ When behavior changes:
 
 ## Boundaries to preserve
 
-- no workbook-specific logic in `taxonomy_resolver`
+- no workbook-specific logic in `src/taxonomy_resolver`
 - no silent fuzzy auto-acceptance
 - no live NCBI dependency for normal resolution

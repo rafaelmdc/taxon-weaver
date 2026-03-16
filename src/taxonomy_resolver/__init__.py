@@ -1,4 +1,6 @@
-"""Public package surface for the taxonomy resolver foundation."""
+"""Stable public API for the Taxonbridge resolver package."""
+
+from importlib.metadata import PackageNotFoundError, version
 
 from .policy import MatchType, ResolutionStatus, WarningCode
 from .schemas import (
@@ -13,6 +15,11 @@ from .schemas import (
 )
 from .service import TaxonomyResolverService
 
+try:
+    __version__ = version("taxonbridge")
+except PackageNotFoundError:
+    __version__ = "0.0.0"
+
 __all__ = [
     "BatchResolveRequest",
     "BatchResolveResult",
@@ -26,4 +33,5 @@ __all__ = [
     "ResolutionStatus",
     "TaxonomyResolverService",
     "WarningCode",
+    "__version__",
 ]

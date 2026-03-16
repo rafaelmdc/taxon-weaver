@@ -209,3 +209,6 @@ __marimo__/
 .idea
 data/ncbi_taxonomy.sqlite
 data/taxdump/taxdump.tar.gz
+*.sqlite
+*.sqlite3
+*.tar.gz

@@ -19,7 +19,7 @@ python -m pip install -e .
 Build from an existing local archive:
 
 ```bash
-python -m taxonomy_tools.cli build-db \
+taxonbridge build-db \
   --dump data/taxdump/taxdump.tar.gz \
   --db data/ncbi_taxonomy.sqlite
 ```
@@ -27,7 +27,7 @@ python -m taxonomy_tools.cli build-db \
 Download the archive first, then build:
 
 ```bash
-python -m taxonomy_tools.cli build-db \
+taxonbridge build-db \
   --download \
   --dump data/taxdump/taxdump.tar.gz \
   --db data/ncbi_taxonomy.sqlite
@@ -36,7 +36,7 @@ python -m taxonomy_tools.cli build-db \
 Optional build report:
 
 ```bash
-python -m taxonomy_tools.cli build-db \
+taxonbridge build-db \
   --download \
   --dump data/taxdump/taxdump.tar.gz \
   --db data/ncbi_taxonomy.sqlite \
@@ -73,7 +73,7 @@ LIMIT 10;
 ## Resolve one name from the CLI
 
 ```bash
-python -m taxonomy_tools.cli resolve-name \
+taxonbridge resolve-name \
   "Faecalibacterium prausnitzii" \
   --db data/ncbi_taxonomy.sqlite \
   --level species
@@ -82,7 +82,7 @@ python -m taxonomy_tools.cli resolve-name \
 Disable fuzzy fallback if you want deterministic-only behavior:
 
 ```bash
-python -m taxonomy_tools.cli resolve-name \
+taxonbridge resolve-name \
   "Faecalibacterim prausnitzii" \
   --db data/ncbi_taxonomy.sqlite \
   --level species \
@@ -119,7 +119,7 @@ Example:
 Run the batch:
 
 ```bash
-python -m taxonomy_tools.cli resolve-batch \
+taxonbridge resolve-batch \
   --db data/ncbi_taxonomy.sqlite \
   --input data/resolve_requests.json \
   --output data/resolve_results.json
@@ -128,8 +128,7 @@ python -m taxonomy_tools.cli resolve-batch \
 ## Use the resolver from Python
 
 ```python
-from taxonomy_resolver.schemas import ResolveRequest
-from taxonomy_resolver.service import TaxonomyResolverService
+from taxonomy_resolver import ResolveRequest, TaxonomyResolverService
 
 service = TaxonomyResolverService("data/ncbi_taxonomy.sqlite")
 
@@ -158,7 +157,7 @@ to a separate cache database path.
 From the CLI:
 
 ```bash
-python -m taxonomy_tools.cli apply-decisions \
+taxonbridge apply-decisions \
   --db data/ncbi_taxonomy.sqlite \
   --input data/decisions.json
 ```
@@ -166,7 +165,7 @@ python -m taxonomy_tools.cli apply-decisions \
 Or with a dedicated cache database:
 
 ```bash
-python -m taxonomy_tools.cli apply-decisions \
+taxonbridge apply-decisions \
   --db data/ncbi_taxonomy.sqlite \
   --cache-db data/review_cache.sqlite \
   --input data/decisions.json
@@ -178,3 +177,4 @@ python -m taxonomy_tools.cli apply-decisions \
 - [Internal contracts](contracts.md)
 - [Taxonomy database](taxonomy-database.md)
 - [Resolution behavior](deterministic-resolution.md)
+- [Django integration](django-integration.md)

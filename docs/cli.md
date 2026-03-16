@@ -3,7 +3,7 @@
 The supported command surface is the unified CLI:
 
 ```bash
-python -m taxonomy_tools.cli <command> [options]
+taxonbridge <command> [options]
 ```
 
 Each command also lives in its own module under `taxonomy_tools/`, which keeps
@@ -16,7 +16,7 @@ the CLI implementation modular while preserving a single public entry point.
 Build the SQLite taxonomy reference database from an NCBI taxdump archive.
 
 ```bash
-python -m taxonomy_tools.cli build-db \
+taxonbridge build-db \
   --dump data/taxdump/taxdump.tar.gz \
   --db data/ncbi_taxonomy.sqlite
 ```
@@ -34,7 +34,7 @@ Options:
 Resolve a single organism string.
 
 ```bash
-python -m taxonomy_tools.cli resolve-name \
+taxonbridge resolve-name \
   "Ruminococcus" \
   --db data/ncbi_taxonomy.sqlite \
   --level genus
@@ -62,7 +62,7 @@ python -m taxonomy_tools.resolve_name_cli \
 Resolve many requests from a JSON input file.
 
 ```bash
-python -m taxonomy_tools.cli resolve-batch \
+taxonbridge resolve-batch \
   --db data/ncbi_taxonomy.sqlite \
   --input data/resolve_requests.json \
   --output data/resolve_results.json
@@ -80,7 +80,7 @@ Options:
 Return cached lineage for one taxid.
 
 ```bash
-python -m taxonomy_tools.cli inspect-lineage \
+taxonbridge inspect-lineage \
   --db data/ncbi_taxonomy.sqlite \
   --taxid 853
 ```
@@ -90,7 +90,7 @@ python -m taxonomy_tools.cli inspect-lineage \
 Persist reviewed decision records.
 
 ```bash
-python -m taxonomy_tools.cli apply-decisions \
+taxonbridge apply-decisions \
   --db data/ncbi_taxonomy.sqlite \
   --cache-db data/review_cache.sqlite \
   --input data/decisions.json
@@ -107,7 +107,13 @@ Options:
 Return metadata for the current taxonomy build.
 
 ```bash
-python -m taxonomy_tools.cli build-info --db data/ncbi_taxonomy.sqlite
+taxonbridge build-info --db data/ncbi_taxonomy.sqlite
+```
+
+Compatibility note:
+
+```bash
+python -m taxonomy_tools.cli <command> [options]
 ```
 
 ## Output format
