@@ -1,0 +1,94 @@
+# Architecture Foundation
+
+This document captures the implementation boundary for Phases 1 through 4.
+
+## Layered design
+
+### Layer A: `taxonomy_resolver`
+
+The resolver package is the reusable core. It owns:
+
+- normalization rules
+- deterministic lookup order
+- fuzzy suggestion generation
+- lineage retrieval
+- status and warning policy
+- reviewed mapping reuse
+- stable request/response contracts
+
+It must not know anything about:
+
+- workbook sheet names
+- Django models
+- project-specific import workflow
+
+### Layer B: Django integration
+
+The later Django app will import `taxonomy_resolver` directly. Django owns:
+
+- upload and batch lifecycle
+- review queue state
+- reviewer actions and audit history
+- canonical organisms and findings linkage
+- UI and optional internal API endpoints
+
+Django does not reimplement taxonomy matching logic.
+
+### Layer C: Excel-specific adapter
+
+The Excel adapter will translate workbook rows into resolver requests and later
+map reviewed decisions back to source rows. It owns:
+
+- workbook configuration
+- sheet and column discovery
+- provenance capture
+- queue deduplication across source rows
+
+It does not own taxonomy policy.
+
+## Data flow
+
+1. Read workbook rows with the Excel adapter.
+2. Convert rows into `ResolveRequest` items.
+3. Submit requests to `TaxonomyResolverService`.
+4. Auto-accept only safe deterministic or cache-backed outcomes.
+5. Send uncertain outcomes to a review queue.
+6. Record user decisions in reviewed mapping storage.
+7. Create or link canonical organism records downstream.
+8. Link findings rows back to canonical organisms while preserving provenance.
+
+## Internal contract
+
+Even before an HTTP API exists, the resolver behaves as if it has one:
+
+- all service methods take explicit request objects
+- all service methods return explicit response objects
+- contracts are JSON-serializable
+- statuses and warnings are centralized in `policy.py`
+
+This lets the same contract drive:
+
+- CLI commands
+- automated tests
+- Django services
+- future FastAPI wrappers
+
+## Current scaffold scope
+
+The current repository foundation includes:
+
+- package layout for `taxonomy_resolver`
+- shared status, warning, and schema models
+- conservative normalization helpers
+- service orchestration boundaries
+- SQLite taxonomy schema plus real taxdump ingestion
+- materialized lineage cache generation
+- build metadata and validation reporting
+- thin CLI entry points for schema bootstrap and single-name resolution
+
+It does not yet include:
+
+- deterministic taxonomy SQL lookup
+- lineage retrieval
+- fuzzy candidate generation
+- reviewed mapping persistence

@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "taxonbridge"
+version = "0.1.0"
+description = "Local-first taxonomy resolution engine scaffolding for microbiome curation workflows."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Proprietary" }
+authors = [
+  { name = "Rafael" }
+]
+dependencies = []
+
+[tool.setuptools.packages.find]
+include = ["taxonomy_resolver*", "taxonomy_tools*"]

@@ -1,0 +1,121 @@
+"""Top-level service entry points for the resolver package."""
+
+from __future__ import annotations
+
+from collections import Counter
+from dataclasses import asdict
+from pathlib import Path
+
+from .cache import lookup_reviewed_mapping
+from .exact import resolve_exact
+from .fuzzy import suggest_fuzzy_candidates
+from .lineage import get_lineage_for_taxid
+from .normalize import looks_vague, normalize_name
+from .policy import MatchType, ResolutionStatus, WarningCode
+from .schemas import (
+    BatchResolveRequest,
+    BatchResolveResult,
+    DecisionRecord,
+    ResolveRequest,
+    ResolveResult,
+)
+
+
+class TaxonomyResolverService:
+    """Single orchestration surface for CLI, tests, and later Django code.
+
+    The service owns workflow order and contract assembly, while lower-level
+    modules own lookup, scoring, and persistence concerns.
+    """
+
+    def __init__(self, taxonomy_db_path: str | Path, cache_db_path: str | Path | None = None):
+        self.taxonomy_db_path = Path(taxonomy_db_path)
+        self.cache_db_path = Path(cache_db_path) if cache_db_path else None
+
+    def resolve_name(self, request: ResolveRequest) -> ResolveResult:
+        """Resolve one organism string using the deterministic-first workflow."""
+
+        normalized_name = normalize_name(request.original_name)
+
+        if looks_vague(request.original_name):
+            return ResolveResult(
+                original_name=request.original_name,
+                normalized_name=normalized_name,
+                provided_level=request.provided_level,
+                status=ResolutionStatus.UNRESOLVED_VAGUE_LABEL,
+                review_required=True,
+                auto_accept=False,
+                match_type=MatchType.NONE,
+                warnings=[WarningCode.VAGUE_LABEL_DETECTED],
+            )
+
+        cached = lookup_reviewed_mapping(request)
+        if cached:
+            return ResolveResult(
+                original_name=request.original_name,
+                normalized_name=normalized_name,
+                provided_level=request.provided_level,
+                status=cached.status,
+                review_required=False,
+                auto_accept=True,
+                match_type=MatchType.CACHED,
+                warnings=list(cached.warnings) + [WarningCode.CACHED_DECISION_REUSED],
+                matched_taxid=cached.resolved_taxid,
+                matched_name=cached.matched_scientific_name,
+                score=cached.score,
+                cache_applied=True,
+                metadata={"decision_created_at": cached.created_at},
+            )
+
+        exact_result = resolve_exact(request)
+        if exact_result:
+            return exact_result
+
+        candidates = suggest_fuzzy_candidates(request) if request.allow_fuzzy else []
+        if candidates:
+            return ResolveResult(
+                original_name=request.original_name,
+                normalized_name=normalized_name,
+                provided_level=request.provided_level,
+                status=ResolutionStatus.SUGGESTED_FUZZY_UNIQUE
+                if len(candidates) == 1
+                else ResolutionStatus.AMBIGUOUS_FUZZY_MULTIPLE,
+                review_required=True,
+                auto_accept=False,
+                match_type=MatchType.FUZZY,
+                candidates=candidates,
+                warnings=[
+                    WarningCode.MULTIPLE_FUZZY_CANDIDATES
+                    if len(candidates) > 1
+                    else WarningCode.NOT_IMPLEMENTED
+                ],
+            )
+
+        return ResolveResult(
+            original_name=request.original_name,
+            normalized_name=normalized_name,
+            provided_level=request.provided_level,
+            status=ResolutionStatus.UNRESOLVED_NO_MATCH,
+            review_required=True,
+            auto_accept=False,
+            match_type=MatchType.NONE,
+            warnings=[WarningCode.NOT_IMPLEMENTED],
+        )
+
+    def resolve_batch(self, request: BatchResolveRequest) -> BatchResolveResult:
+        """Resolve a batch and return compact per-status counts."""
+
+        results = [self.resolve_name(item) for item in request.items]
+        counts = Counter(result.status for result in results)
+        summary = {status.value: counts.get(status, 0) for status in ResolutionStatus}
+        return BatchResolveResult(results=results, batch_id=request.batch_id, summary=summary)
+
+    def get_lineage(self, taxid: int) -> list[dict[str, str | int]]:
+        """Expose lineage data using the same shape a future API would return."""
+
+        return [asdict(entry) for entry in get_lineage_for_taxid(taxid)]
+
+    def record_decision(self, _decision: DecisionRecord) -> None:
+        """Persist reviewed decisions when the cache backend is implemented."""
+
+        raise NotImplementedError("Decision persistence will be implemented in Phase 9.")
