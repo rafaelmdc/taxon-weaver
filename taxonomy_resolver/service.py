@@ -67,7 +67,7 @@ class TaxonomyResolverService:
                 metadata={"decision_created_at": cached.created_at},
             )
 
-        exact_result = resolve_exact(request)
+        exact_result = resolve_exact(request, self.taxonomy_db_path)
         if exact_result:
             return exact_result
 
@@ -99,7 +99,6 @@ class TaxonomyResolverService:
             review_required=True,
             auto_accept=False,
             match_type=MatchType.NONE,
-            warnings=[WarningCode.NOT_IMPLEMENTED],
         )
 
     def resolve_batch(self, request: BatchResolveRequest) -> BatchResolveResult:
@@ -113,7 +112,7 @@ class TaxonomyResolverService:
     def get_lineage(self, taxid: int) -> list[dict[str, str | int]]:
         """Expose lineage data using the same shape a future API would return."""
 
-        return [asdict(entry) for entry in get_lineage_for_taxid(taxid)]
+        return [asdict(entry) for entry in get_lineage_for_taxid(self.taxonomy_db_path, taxid)]
 
     def record_decision(self, _decision: DecisionRecord) -> None:
         """Persist reviewed decisions when the cache backend is implemented."""

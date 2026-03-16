@@ -6,6 +6,7 @@ readable and testable.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from pathlib import Path
 
@@ -220,3 +221,69 @@ def upsert_metadata(db_path: Path | str, items: dict[str, str]) -> None:
             items.items(),
         )
         connection.commit()
+
+
+def fetch_name_matches(
+    db_path: Path | str,
+    *,
+    name_txt: str | None = None,
+    normalized_name: str | None = None,
+    scientific_only: bool = False,
+    exclude_scientific: bool = False,
+) -> list[sqlite3.Row]:
+    """Return taxon/name matches for exact or normalized deterministic lookup."""
+
+    predicates: list[str] = []
+    parameters: list[object] = []
+
+    if name_txt is not None:
+        predicates.append("n.name_txt = ?")
+        parameters.append(name_txt)
+    if normalized_name is not None:
+        predicates.append("n.normalized_name = ?")
+        parameters.append(normalized_name)
+    if scientific_only:
+        predicates.append("n.name_class = 'scientific name'")
+    if exclude_scientific:
+        predicates.append("n.name_class <> 'scientific name'")
+
+    where_clause = " AND ".join(predicates) if predicates else "1 = 1"
+    query = f"""
+        SELECT
+            n.taxid,
+            n.name_txt AS matched_name,
+            n.name_class,
+            t.rank,
+            sci.name_txt AS scientific_name,
+            lc.lineage_json
+        FROM taxon_names AS n
+        JOIN taxa AS t
+            ON t.taxid = n.taxid
+        LEFT JOIN taxon_names AS sci
+            ON sci.taxid = n.taxid
+           AND sci.name_class = 'scientific name'
+        LEFT JOIN lineage_cache AS lc
+            ON lc.taxid = n.taxid
+        WHERE {where_clause}
+        ORDER BY
+            CASE WHEN n.name_class = 'scientific name' THEN 0 ELSE 1 END,
+            n.taxid,
+            n.name_txt
+    """
+
+    with connect(db_path) as connection:
+        return list(connection.execute(query, parameters).fetchall())
+
+
+def fetch_lineage_entries(db_path: Path | str, taxid: int) -> list[dict[str, object]]:
+    """Return cached lineage entries for one taxid from the materialized cache."""
+
+    with connect(db_path) as connection:
+        row = connection.execute(
+            "SELECT lineage_json FROM lineage_cache WHERE taxid = ?",
+            (taxid,),
+        ).fetchone()
+
+    if row is None:
+        return []
+    return list(json.loads(row["lineage_json"]))

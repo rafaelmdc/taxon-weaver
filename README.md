@@ -7,7 +7,7 @@ application repository.
 ## Current scope
 
 The current implementation covers the architecture/contracts scaffold plus a
-complete Phase 2 taxonomy database build:
+complete Phase 2 taxonomy database build and the deterministic resolver layer:
 
 - layered architecture boundaries
 - package-first resolver foundation
@@ -17,12 +17,13 @@ complete Phase 2 taxonomy database build:
 - taxdump ingestion into the taxonomy reference database
 - materialized lineage cache generation
 - build metadata and validation reporting
+- exact scientific, synonym, and normalized deterministic resolution
+- lineage retrieval from the materialized cache
+- provided-level conflict signaling for deterministic matches
 - thin CLI wrappers for local use
 
 The following phases are intentionally not implemented yet:
 
-- deterministic taxonomy lookup
-- lineage retrieval
 - fuzzy suggestion scoring
 - reviewed mapping persistence
 - Excel adapter
@@ -50,6 +51,7 @@ taxonomy_tools/
 docs/
   architecture.md
   contracts.md
+  deterministic-resolution.md
   taxonomy-database.md
   workflow.md
 ```
@@ -88,9 +90,9 @@ Resolve one name through the scaffolded service:
 python -m taxonomy_tools.resolve_name_cli "Faecalibacterium prausnitzii" --db data/ncbi_taxonomy.sqlite --level species
 ```
 
-At this stage the local taxonomy reference store is real, but resolver matching
-logic is still placeholder code pending the later deterministic and fuzzy
-phases.
+At this stage deterministic resolution is implemented. Fuzzy suggestions,
+reviewed mapping persistence, Excel import, and Django workflow remain for
+later phases.
 
 The build CLI now reports progress for both:
 
@@ -102,5 +104,6 @@ The build CLI now reports progress for both:
 
 - [Architecture foundation](docs/architecture.md)
 - [Internal contracts](docs/contracts.md)
+- [Deterministic resolution](docs/deterministic-resolution.md)
 - [Taxonomy database builder](docs/taxonomy-database.md)
 - [Roadmap source](docs/workflow.md)

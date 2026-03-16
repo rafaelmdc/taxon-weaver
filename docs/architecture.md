@@ -84,11 +84,11 @@ The current repository foundation includes:
 - SQLite taxonomy schema plus real taxdump ingestion
 - materialized lineage cache generation
 - build metadata and validation reporting
+- deterministic exact, synonym, and normalized lookup
+- lineage retrieval from cached lineage JSON
 - thin CLI entry points for schema bootstrap and single-name resolution
 
 It does not yet include:
 
-- deterministic taxonomy SQL lookup
-- lineage retrieval
 - fuzzy candidate generation
 - reviewed mapping persistence

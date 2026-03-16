@@ -13,6 +13,18 @@ VAGUE_LABEL_TOKENS = {
     "group",
     "cluster",
 }
+LEVEL_ALIASES = {
+    "super kingdom": "superkingdom",
+    "domain": "superkingdom",
+    "kingdom": "kingdom",
+    "phylum": "phylum",
+    "division": "phylum",
+    "class": "class",
+    "order": "order",
+    "family": "family",
+    "genus": "genus",
+    "species": "species",
+}
 
 
 def normalize_name(name: str) -> str:
@@ -32,3 +44,12 @@ def looks_vague(name: str) -> bool:
 
     normalized = normalize_name(name)
     return any(token in normalized.split() or token in normalized for token in VAGUE_LABEL_TOKENS)
+
+
+def normalize_level(level: str | None) -> str | None:
+    """Normalize curator-provided taxonomic levels for soft rank comparison."""
+
+    if level is None:
+        return None
+    normalized = normalize_name(level).removesuffix(" level")
+    return LEVEL_ALIASES.get(normalized, normalized)
