@@ -7,7 +7,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 from .cache import lookup_reviewed_mapping, record_reviewed_mapping
-from .db import fetch_all_metadata
+from .db import connect, fetch_all_metadata, initialize_database
 from .exact import resolve_exact
 from .fuzzy import suggest_fuzzy_candidates
 from .lineage import get_lineage_for_taxid
@@ -40,6 +40,42 @@ class TaxonomyResolverService:
     def __init__(self, taxonomy_db_path: str | Path, cache_db_path: str | Path | None = None):
         self.taxonomy_db_path = Path(taxonomy_db_path)
         self.cache_db_path = Path(cache_db_path) if cache_db_path else None
+        initialize_database(self.taxonomy_db_path, create_indexes=False)
+        if self.cache_db_path and self.cache_db_path != self.taxonomy_db_path:
+            initialize_database(self.cache_db_path)
+        self._taxonomy_connection = connect(self.taxonomy_db_path)
+        if self.cache_db_path and self.cache_db_path != self.taxonomy_db_path:
+            self._cache_connection = connect(self.cache_db_path)
+        else:
+            self._cache_connection = self._taxonomy_connection
+        self._taxonomy_metadata = fetch_all_metadata(self._taxonomy_connection)
+        self._taxonomy_build_version = self._taxonomy_metadata.get("taxonomy_build_version")
+        self._closed = False
+
+    def close(self) -> None:
+        """Release any persistent SQLite connections owned by the service."""
+
+        if self._closed:
+            return
+        if self._cache_connection is not self._taxonomy_connection:
+            self._cache_connection.close()
+        self._taxonomy_connection.close()
+        self._closed = True
+
+    def __enter__(self) -> TaxonomyResolverService:
+        """Support context-manager usage for explicit connection cleanup."""
+
+        return self
+
+    def __exit__(
+        self,
+        _exc_type: type[BaseException] | None,
+        _exc: BaseException | None,
+        _tb: object | None,
+    ) -> None:
+        """Close owned connections when the service leaves a context block."""
+
+        self.close()
 
     def resolve_name(self, request: ResolveRequest) -> ResolveResult:
         """Resolve one organism string using the deterministic-first workflow."""
@@ -48,8 +84,10 @@ class TaxonomyResolverService:
 
         cached = lookup_reviewed_mapping(
             request,
-            taxonomy_db_path=self.taxonomy_db_path,
-            cache_db_path=self.cache_db_path,
+            taxonomy_db_path=self._taxonomy_connection,
+            cache_db_path=self._cache_connection,
+            taxonomy_build_version=self._taxonomy_build_version,
+            create_cache_indexes=self._cache_connection is not self._taxonomy_connection,
         )
         if cached:
             return ResolveResult(
@@ -68,7 +106,7 @@ class TaxonomyResolverService:
                 metadata={"decision_created_at": cached.created_at},
             )
 
-        exact_result = resolve_exact(request, self.taxonomy_db_path)
+        exact_result = resolve_exact(request, self._taxonomy_connection)
         if exact_result:
             return exact_result
 
@@ -90,7 +128,7 @@ class TaxonomyResolverService:
             )
 
         candidates = (
-            suggest_fuzzy_candidates(request, self.taxonomy_db_path)
+            suggest_fuzzy_candidates(request, self._taxonomy_connection)
             if request.allow_fuzzy
             else []
         )
@@ -130,21 +168,22 @@ class TaxonomyResolverService:
     def get_lineage(self, taxid: int) -> list[dict[str, str | int]]:
         """Expose lineage data using the same shape a future API would return."""
 
-        return [asdict(entry) for entry in get_lineage_for_taxid(self.taxonomy_db_path, taxid)]
+        return [asdict(entry) for entry in get_lineage_for_taxid(self._taxonomy_connection, taxid)]
 
     def record_decision(self, _decision: DecisionRecord) -> None:
         """Persist reviewed decisions when the cache backend is implemented."""
 
         record_reviewed_mapping(
             _decision,
-            taxonomy_db_path=self.taxonomy_db_path,
-            cache_db_path=self.cache_db_path,
+            taxonomy_db_path=self._taxonomy_connection,
+            cache_db_path=self._cache_connection,
+            create_cache_indexes=self._cache_connection is not self._taxonomy_connection,
         )
 
     def get_taxonomy_build_info(self) -> dict[str, str]:
         """Expose taxonomy build metadata for CLI and later integration checks."""
 
-        return fetch_all_metadata(self.taxonomy_db_path)
+        return dict(self._taxonomy_metadata)
 
     def _resolve_transformed_exact(self, request: ResolveRequest) -> ResolveResult | None:
         """Try configured fallback transforms before fuzzy matching or vague failure.
@@ -162,7 +201,7 @@ class TaxonomyResolverService:
                 source=request.source,
                 context=request.context,
             )
-            transformed_result = resolve_exact(transformed_request, self.taxonomy_db_path)
+            transformed_result = resolve_exact(transformed_request, self._taxonomy_connection)
             if transformed_result is None:
                 continue
 

@@ -6,13 +6,16 @@ deterministic-first resolution order.
 
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 
 from .db import fetch_fuzzy_name_pool
-from .lineage import get_lineage_for_taxid
+from .lineage import get_lineage_for_taxid, lineage_entries_from_json
 from .normalize import normalize_level, normalize_name
 from .policy import MatchType
 from .schemas import CandidateMatch, ResolveRequest
+
+DatabaseHandle = sqlite3.Connection | str | Path
 
 try:
     from rapidfuzz import fuzz
@@ -79,7 +82,7 @@ def _similarity_score(
 
 def suggest_fuzzy_candidates(
     request: ResolveRequest,
-    db_path: str | Path,
+    db_path: DatabaseHandle,
     *,
     max_candidates: int = 5,
 ) -> list[CandidateMatch]:
@@ -134,7 +137,10 @@ def suggest_fuzzy_candidates(
             rank=str(row["rank"]),
             match_type=MatchType.FUZZY,
             score=round(score, 2),
-            lineage=get_lineage_for_taxid(db_path, int(row["taxid"])),
+            lineage=(
+                lineage_entries_from_json(row["lineage_json"])
+                or get_lineage_for_taxid(db_path, int(row["taxid"]))
+            ),
         )
         for score, row in ranked
     ]

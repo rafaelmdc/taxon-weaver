@@ -7,6 +7,7 @@ lookup/write behavior.
 from __future__ import annotations
 
 import json
+import sqlite3
 from pathlib import Path
 
 from .db import (
@@ -19,21 +20,44 @@ from .normalize import normalize_level, normalize_name
 from .policy import MatchType, ResolutionStatus, WarningCode
 from .schemas import DecisionAction, DecisionRecord, ResolveRequest
 
+_INITIALIZED_CACHE_DATABASES: set[tuple[str, str | int]] = set()
+DatabaseHandle = sqlite3.Connection | Path | str
+
 
 def _resolve_cache_db_path(
-    taxonomy_db_path: str | Path,
-    cache_db_path: str | Path | None,
-) -> Path:
+    taxonomy_db_path: DatabaseHandle,
+    cache_db_path: DatabaseHandle | None,
+) -> DatabaseHandle:
     """Resolve the SQLite path used for reviewed mapping persistence."""
 
-    return Path(cache_db_path) if cache_db_path is not None else Path(taxonomy_db_path)
+    return cache_db_path if cache_db_path is not None else taxonomy_db_path
+
+
+def _cache_key(db_path: DatabaseHandle) -> tuple[str, str | int]:
+    """Return a stable in-process key for one cache backend."""
+
+    if isinstance(db_path, sqlite3.Connection):
+        return ("connection", id(db_path))
+    return ("path", str(Path(db_path).resolve()))
+
+
+def _ensure_cache_database(db_path: DatabaseHandle, *, create_indexes: bool) -> None:
+    """Initialize the cache schema once per process for each SQLite file."""
+
+    key = _cache_key(db_path)
+    if key in _INITIALIZED_CACHE_DATABASES:
+        return
+    initialize_database(db_path, create_indexes=create_indexes)
+    _INITIALIZED_CACHE_DATABASES.add(key)
 
 
 def lookup_reviewed_mapping(
     request: ResolveRequest,
     *,
-    taxonomy_db_path: str | Path,
-    cache_db_path: str | Path | None = None,
+    taxonomy_db_path: DatabaseHandle,
+    cache_db_path: DatabaseHandle | None = None,
+    taxonomy_build_version: str | None = None,
+    create_cache_indexes: bool = True,
 ) -> DecisionRecord | None:
     """Return a conservatively reusable reviewed mapping if one is available.
 
@@ -47,8 +71,12 @@ def lookup_reviewed_mapping(
     """
 
     resolved_cache_db_path = _resolve_cache_db_path(taxonomy_db_path, cache_db_path)
-    initialize_database(resolved_cache_db_path)
-    taxonomy_build_version = get_metadata_value(taxonomy_db_path, "taxonomy_build_version")
+    _ensure_cache_database(
+        resolved_cache_db_path,
+        create_indexes=create_cache_indexes,
+    )
+    if taxonomy_build_version is None:
+        taxonomy_build_version = get_metadata_value(taxonomy_db_path, "taxonomy_build_version")
     if taxonomy_build_version is None:
         return None
 
@@ -82,13 +110,17 @@ def lookup_reviewed_mapping(
 def record_reviewed_mapping(
     decision: DecisionRecord,
     *,
-    taxonomy_db_path: str | Path,
-    cache_db_path: str | Path | None = None,
+    taxonomy_db_path: DatabaseHandle,
+    cache_db_path: DatabaseHandle | None = None,
+    create_cache_indexes: bool = True,
 ) -> None:
     """Persist a reviewed mapping decision for later conservative reuse."""
 
     resolved_cache_db_path = _resolve_cache_db_path(taxonomy_db_path, cache_db_path)
-    initialize_database(resolved_cache_db_path)
+    _ensure_cache_database(
+        resolved_cache_db_path,
+        create_indexes=create_cache_indexes,
+    )
     insert_reviewed_mapping(
         resolved_cache_db_path,
         (

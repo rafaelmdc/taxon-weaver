@@ -474,7 +474,7 @@ def build_taxonomy_database(
     taxonomy_build_version = _build_taxonomy_version(built_at_utc, source_dump_sha256)
 
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    initialize_database(db_path)
+    initialize_database(db_path, create_indexes=False)
     clear_reference_tables(db_path)
 
     with TarFile.open(dump_path) as archive:
@@ -512,6 +512,13 @@ def build_taxonomy_database(
         scientific_name_by_taxid=scientific_name_by_taxid,
         progress_callback=progress_callback,
     )
+    _notify_progress(
+        progress_callback,
+        stage="indexes",
+        message="Creating SQLite indexes",
+        final=True,
+    )
+    initialize_database(db_path, create_indexes=True)
     _notify_progress(
         progress_callback,
         stage="validate",

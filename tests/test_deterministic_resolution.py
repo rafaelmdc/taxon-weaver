@@ -6,6 +6,7 @@ import tarfile
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import MagicMock, call, patch
 
 from taxonomy_resolver.build import build_taxonomy_database
 from taxonomy_resolver.policy import MatchType, ResolutionStatus, WarningCode
@@ -214,6 +215,38 @@ class DeterministicResolutionTests(unittest.TestCase):
         self.assertFalse(result.auto_accept)
         self.assertEqual(result.matched_taxid, 239934)
         self.assertIn(WarningCode.TRANSFORM_APPLIED, result.warnings)
+
+    def test_service_initialization_skips_taxonomy_index_creation_on_open(self) -> None:
+        taxonomy_connection = MagicMock()
+        cache_connection = MagicMock()
+
+        with (
+            patch("taxonomy_resolver.service.initialize_database") as initialize_database,
+            patch(
+                "taxonomy_resolver.service.connect",
+                side_effect=[taxonomy_connection, cache_connection],
+            ) as connect,
+            patch(
+                "taxonomy_resolver.service.fetch_all_metadata",
+                return_value={"taxonomy_build_version": "mini-build"},
+            ),
+        ):
+            service = TaxonomyResolverService("taxonomy.sqlite", cache_db_path="cache.sqlite")
+            service.close()
+
+        self.assertEqual(
+            initialize_database.call_args_list,
+            [
+                call(Path("taxonomy.sqlite"), create_indexes=False),
+                call(Path("cache.sqlite")),
+            ],
+        )
+        self.assertEqual(
+            connect.call_args_list,
+            [call(Path("taxonomy.sqlite")), call(Path("cache.sqlite"))],
+        )
+        taxonomy_connection.close.assert_called_once()
+        cache_connection.close.assert_called_once()
 
     def _write_taxdump_archive(self, archive_path: Path) -> None:
         """Create a small tar.gz archive matching the builder's expectations."""

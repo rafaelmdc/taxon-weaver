@@ -11,6 +11,7 @@ import sqlite3
 from pathlib import Path
 
 DEFAULT_DB_PATH: Path | None = None
+DatabaseHandle = sqlite3.Connection | Path | str | None
 
 SCHEMA_STATEMENTS = [
     """
@@ -89,14 +90,18 @@ INDEX_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS idx_taxon_names_name_txt ON taxon_names(name_txt)",
     "CREATE INDEX IF NOT EXISTS idx_taxon_names_normalized_name ON taxon_names(normalized_name)",
     "CREATE INDEX IF NOT EXISTS idx_taxon_names_name_class ON taxon_names(name_class)",
+    "CREATE INDEX IF NOT EXISTS idx_taxon_names_name_txt_class_taxid ON taxon_names(name_txt, name_class, taxid)",
+    "CREATE INDEX IF NOT EXISTS idx_taxon_names_taxid_class_name_txt ON taxon_names(taxid, name_class, name_txt)",
     "CREATE INDEX IF NOT EXISTS idx_reviewed_mappings_norm_level ON reviewed_mappings(normalized_name, provided_level)",
 ]
 
 
-def connect(db_path: Path | str | None = None) -> sqlite3.Connection:
+def connect(db_path: DatabaseHandle = None) -> sqlite3.Connection:
     """Open a SQLite connection with row access by column name."""
 
     global DEFAULT_DB_PATH
+    if isinstance(db_path, sqlite3.Connection):
+        return db_path
     resolved_path = Path(db_path) if db_path is not None else get_default_db_path()
     connection = sqlite3.connect(resolved_path)
     connection.row_factory = sqlite3.Row
@@ -112,14 +117,15 @@ def get_default_db_path() -> Path:
     return DEFAULT_DB_PATH
 
 
-def initialize_database(db_path: Path | str) -> None:
+def initialize_database(db_path: Path | str, *, create_indexes: bool = True) -> None:
     """Create the reference and cache schema in a new or existing database."""
 
     with connect(db_path) as connection:
         for statement in SCHEMA_STATEMENTS:
             connection.execute(statement)
-        for statement in INDEX_STATEMENTS:
-            connection.execute(statement)
+        if create_indexes:
+            for statement in INDEX_STATEMENTS:
+                connection.execute(statement)
         connection.commit()
 
 
@@ -134,7 +140,10 @@ def clear_reference_tables(db_path: Path | str) -> None:
         connection.commit()
 
 
-def insert_taxa_rows(rows: list[tuple[object, ...]], db_path: Path | str | None = None) -> None:
+def insert_taxa_rows(
+    rows: list[tuple[object, ...]],
+    db_path: DatabaseHandle = None,
+) -> None:
     """Bulk insert parsed taxa rows from `nodes.dmp`."""
 
     with connect(db_path or get_default_db_path()) as connection:
@@ -163,7 +172,8 @@ def insert_taxa_rows(rows: list[tuple[object, ...]], db_path: Path | str | None 
 
 
 def insert_taxon_name_rows(
-    rows: list[tuple[object, ...]], db_path: Path | str | None = None
+    rows: list[tuple[object, ...]],
+    db_path: DatabaseHandle = None,
 ) -> None:
     """Bulk insert parsed taxon name rows from `names.dmp`."""
 
@@ -184,7 +194,8 @@ def insert_taxon_name_rows(
 
 
 def insert_lineage_rows(
-    rows: list[tuple[object, ...]], db_path: Path | str | None = None
+    rows: list[tuple[object, ...]],
+    db_path: DatabaseHandle = None,
 ) -> None:
     """Bulk insert materialized lineage cache rows."""
 
@@ -223,7 +234,7 @@ def upsert_metadata(db_path: Path | str, items: dict[str, str]) -> None:
         connection.commit()
 
 
-def get_metadata_value(db_path: Path | str, key: str) -> str | None:
+def get_metadata_value(db_path: DatabaseHandle, key: str) -> str | None:
     """Return one metadata value from the SQLite store if it exists."""
 
     with connect(db_path) as connection:
@@ -234,7 +245,7 @@ def get_metadata_value(db_path: Path | str, key: str) -> str | None:
     return None if row is None else str(row["value"])
 
 
-def fetch_all_metadata(db_path: Path | str) -> dict[str, str]:
+def fetch_all_metadata(db_path: DatabaseHandle) -> dict[str, str]:
     """Return all metadata key/value pairs from the SQLite store."""
 
     with connect(db_path) as connection:
@@ -242,7 +253,7 @@ def fetch_all_metadata(db_path: Path | str) -> dict[str, str]:
     return {str(row["key"]): str(row["value"]) for row in rows}
 
 
-def insert_reviewed_mapping(db_path: Path | str, row: tuple[object, ...]) -> None:
+def insert_reviewed_mapping(db_path: DatabaseHandle, row: tuple[object, ...]) -> None:
     """Persist one reviewed mapping record."""
 
     with connect(db_path) as connection:
@@ -271,7 +282,7 @@ def insert_reviewed_mapping(db_path: Path | str, row: tuple[object, ...]) -> Non
 
 
 def fetch_reusable_reviewed_mapping(
-    db_path: Path | str,
+    db_path: DatabaseHandle,
     *,
     normalized_name: str,
     provided_level: str | None,
@@ -301,7 +312,7 @@ def fetch_reusable_reviewed_mapping(
 
 
 def fetch_name_matches(
-    db_path: Path | str,
+    db_path: DatabaseHandle,
     *,
     name_txt: str | None = None,
     normalized_name: str | None = None,
@@ -312,13 +323,17 @@ def fetch_name_matches(
 
     predicates: list[str] = []
     parameters: list[object] = []
+    index_hint = ""
 
     if name_txt is not None:
         predicates.append("n.name_txt = ?")
         parameters.append(name_txt)
+        index_hint = "INDEXED BY idx_taxon_names_name_txt"
     if normalized_name is not None:
         predicates.append("n.normalized_name = ?")
         parameters.append(normalized_name)
+        if not index_hint:
+            index_hint = "INDEXED BY idx_taxon_names_normalized_name"
     if scientific_only:
         predicates.append("n.name_class = 'scientific name'")
     if exclude_scientific:
@@ -333,7 +348,7 @@ def fetch_name_matches(
             t.rank,
             sci.name_txt AS scientific_name,
             lc.lineage_json
-        FROM taxon_names AS n
+        FROM taxon_names AS n {index_hint}
         JOIN taxa AS t
             ON t.taxid = n.taxid
         LEFT JOIN taxon_names AS sci
@@ -342,17 +357,13 @@ def fetch_name_matches(
         LEFT JOIN lineage_cache AS lc
             ON lc.taxid = n.taxid
         WHERE {where_clause}
-        ORDER BY
-            CASE WHEN n.name_class = 'scientific name' THEN 0 ELSE 1 END,
-            n.taxid,
-            n.name_txt
     """
 
     with connect(db_path) as connection:
         return list(connection.execute(query, parameters).fetchall())
 
 
-def fetch_lineage_entries(db_path: Path | str, taxid: int) -> list[dict[str, object]]:
+def fetch_lineage_entries(db_path: DatabaseHandle, taxid: int) -> list[dict[str, object]]:
     """Return cached lineage entries for one taxid from the materialized cache."""
 
     with connect(db_path) as connection:
@@ -367,56 +378,99 @@ def fetch_lineage_entries(db_path: Path | str, taxid: int) -> list[dict[str, obj
 
 
 def fetch_fuzzy_name_pool(
-    db_path: Path | str,
+    db_path: DatabaseHandle,
     normalized_name: str,
     *,
     limit: int = 1000,
 ) -> list[sqlite3.Row]:
     """Return a narrowed candidate pool for supervised fuzzy suggestion.
 
-    This uses conservative prefix filters so the query stays bounded on the
-    local SQLite reference store without requiring an additional search index.
+    This keeps the primary retrieval path on indexed scientific-name prefixes.
+    A smaller internal-token fallback is used only when the anchored prefix does
+    not produce enough rows.
     """
 
     tokens = [token for token in normalized_name.split() if len(token) >= 3]
-    prefixes = [token[:4] for token in tokens[:2]]
-    if not prefixes:
-        prefixes = [normalized_name[:4]] if normalized_name else []
-
-    predicates: list[str] = []
-    parameters: list[object] = []
-    for prefix in prefixes:
-        predicates.append("n.normalized_name LIKE ?")
-        parameters.append(f"{prefix}%")
+    primary_prefix = ""
+    internal_prefix = ""
+    if tokens:
+        primary_prefix = tokens[0][: min(len(tokens[0]), 6)]
         if len(tokens) > 1:
-            predicates.append("n.normalized_name LIKE ?")
-            parameters.append(f"% {prefix}%")
+            internal_prefix = tokens[1][: min(len(tokens[1]), 6)]
+    elif normalized_name:
+        primary_prefix = normalized_name[: min(len(normalized_name), 6)]
 
-    if not predicates:
+    if not primary_prefix:
         return []
 
-    parameters.append(limit)
-    query = f"""
+    primary_query = """
         SELECT
             n.taxid,
             n.name_txt AS matched_name,
             n.normalized_name,
             n.name_class,
             t.rank,
-            sci.name_txt AS scientific_name
+            sci.name_txt AS scientific_name,
+            lc.lineage_json
+        FROM taxon_names AS n INDEXED BY idx_taxon_names_normalized_name
+        JOIN taxa AS t
+            ON t.taxid = n.taxid
+        LEFT JOIN taxon_names AS sci
+            ON sci.taxid = n.taxid
+           AND sci.name_class = 'scientific name'
+        LEFT JOIN lineage_cache AS lc
+            ON lc.taxid = n.taxid
+        WHERE n.name_class = 'scientific name'
+          AND n.normalized_name >= ?
+          AND n.normalized_name < ?
+        LIMIT ?
+    """
+    fallback_query = """
+        SELECT
+            n.taxid,
+            n.name_txt AS matched_name,
+            n.normalized_name,
+            n.name_class,
+            t.rank,
+            sci.name_txt AS scientific_name,
+            lc.lineage_json
         FROM taxon_names AS n
         JOIN taxa AS t
             ON t.taxid = n.taxid
         LEFT JOIN taxon_names AS sci
             ON sci.taxid = n.taxid
            AND sci.name_class = 'scientific name'
-        WHERE {" OR ".join(predicates)}
-        ORDER BY
-            CASE WHEN n.name_class = 'scientific name' THEN 0 ELSE 1 END,
-            LENGTH(n.normalized_name),
-            n.taxid
+        LEFT JOIN lineage_cache AS lc
+            ON lc.taxid = n.taxid
+        WHERE n.name_class = 'scientific name'
+          AND n.normalized_name LIKE ?
         LIMIT ?
     """
 
     with connect(db_path) as connection:
-        return list(connection.execute(query, parameters).fetchall())
+        rows = list(
+            connection.execute(
+                primary_query,
+                (primary_prefix, f"{primary_prefix}\uffff", limit),
+            ).fetchall()
+        )
+        if internal_prefix and len(rows) < limit:
+            remaining = limit - len(rows)
+            rows.extend(
+                connection.execute(
+                    fallback_query,
+                    (f"% {internal_prefix}%", remaining),
+                ).fetchall()
+            )
+
+    unique_rows: list[sqlite3.Row] = []
+    seen_keys: set[tuple[int, str]] = set()
+    for row in rows:
+        key = (int(row["taxid"]), str(row["matched_name"]))
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        unique_rows.append(row)
+        if len(unique_rows) >= limit:
+            break
+    return unique_rows

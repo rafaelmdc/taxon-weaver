@@ -9,10 +9,11 @@ Phase 5 resolves names in a deterministic-first order:
 
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 
 from .db import fetch_name_matches
-from .lineage import get_lineage_for_taxid
+from .lineage import get_lineage_for_taxid, lineage_entries_from_json
 from .normalize import normalize_level, normalize_name
 from .policy import (
     MatchType,
@@ -24,18 +25,21 @@ from .policy import (
 )
 from .schemas import CandidateMatch, ResolveRequest, ResolveResult
 
+DatabaseHandle = sqlite3.Connection | str | Path
 
-def _build_candidate(row: object, match_type: MatchType, db_path: str | Path) -> CandidateMatch:
+
+def _build_candidate(row: object, match_type: MatchType, db_path: DatabaseHandle) -> CandidateMatch:
     """Convert one SQL row into a review-ready exact candidate."""
 
     taxid = int(row["taxid"])
+    lineage = lineage_entries_from_json(row["lineage_json"])
     return CandidateMatch(
         taxid=taxid,
         name=str(row["scientific_name"] or row["matched_name"]),
         rank=str(row["rank"]),
         match_type=match_type,
         score=1.0,
-        lineage=get_lineage_for_taxid(db_path, taxid),
+        lineage=lineage if lineage else get_lineage_for_taxid(db_path, taxid),
     )
 
 
@@ -52,7 +56,7 @@ def _finalize_unique_result(
     request: ResolveRequest,
     row: object,
     *,
-    db_path: str | Path,
+    db_path: DatabaseHandle,
     status: ResolutionStatus,
     match_type: MatchType,
     warnings: list[WarningCode] | None = None,
@@ -67,6 +71,7 @@ def _finalize_unique_result(
     )
 
     taxid = int(row["taxid"])
+    lineage = lineage_entries_from_json(row["lineage_json"])
     return ResolveResult(
         original_name=request.original_name,
         normalized_name=normalize_name(request.original_name),
@@ -80,7 +85,7 @@ def _finalize_unique_result(
         matched_name=str(row["scientific_name"] or row["matched_name"]),
         matched_rank=str(row["rank"]),
         score=1.0,
-        lineage=get_lineage_for_taxid(db_path, taxid),
+        lineage=lineage if lineage else get_lineage_for_taxid(db_path, taxid),
         metadata={"matched_input_name": str(row["matched_name"])},
     )
 
@@ -89,7 +94,7 @@ def _ambiguous_result(
     request: ResolveRequest,
     rows: list[object],
     *,
-    db_path: str | Path,
+    db_path: DatabaseHandle,
     match_type: MatchType,
     warning: WarningCode,
 ) -> ResolveResult:
@@ -127,7 +132,7 @@ def _coalesce_normalized_matches(rows: list[object]) -> list[object]:
     return list(best_by_taxid.values())
 
 
-def resolve_exact(request: ResolveRequest, db_path: str | Path) -> ResolveResult | None:
+def resolve_exact(request: ResolveRequest, db_path: DatabaseHandle) -> ResolveResult | None:
     """Return a deterministic result if a safe exact path resolves the input."""
 
     scientific_rows = fetch_name_matches(
