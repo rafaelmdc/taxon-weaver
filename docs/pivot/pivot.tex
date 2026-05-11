@@ -1,0 +1,1081 @@
+\documentclass[11pt,a4paper]{article}
+
+% -----------------------------------------------------------------------------
+% Threadwork Design Report
+% -----------------------------------------------------------------------------
+
+\usepackage[margin=2.5cm]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{enumitem}
+\usepackage{titlesec}
+\usepackage{fancyvrb}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=black,
+  urlcolor=blue,
+  citecolor=black
+}
+
+\setlist[itemize]{topsep=3pt,itemsep=2pt,parsep=0pt}
+\setlist[enumerate]{topsep=3pt,itemsep=2pt,parsep=0pt}
+\titleformat{\section}{\large\bfseries}{\thesection}{0.8em}{}
+\titleformat{\subsection}{\normalsize\bfseries}{\thesubsection}{0.8em}{}
+\titleformat{\subsubsection}{\normalsize\itshape}{\thesubsubsection}{0.8em}{}
+
+\newcommand{\code}[1]{\texttt{#1}}
+
+\title{\textbf{Threadwork: Professional Design Report}\\
+\large Turning \code{taxon-weaver} into a shared biological resolver toolkit}
+\author{Draft technical report}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+\noindent
+\code{taxon-weaver} is already shaped like the first member of a broader family of local-first biological resolver tools. Its strongest design choices are package-first architecture, stable JSON-like request/response contracts, deterministic-first resolution, local SQLite reference databases, lineage retrieval, reviewed decision reuse, and a thin CLI. The next strategic step is not to rewrite it from scratch, but to extract its reusable patterns into a generic \textbf{Threadwork} core so future modules such as \code{mesh-weaver}, \code{go-weaver}, \code{domain-weaver}, \code{protein-weaver}, and \code{gene-weaver} expose the same interface and can be integrated by downstream systems such as ORDINA without one-off glue code.
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+% -----------------------------------------------------------------------------
+\section{Executive summary}
+% -----------------------------------------------------------------------------
+
+The current \code{taxon-weaver} project should be treated as the prototype implementation of a broader resolver ecosystem. It already contains the correct instincts: the resolver is a reusable package, the CLI is thin, the database is local-first, results are JSON-serializable, fuzzy matching is supervised, and reviewed mappings can be reused conservatively.
+
+The proposed umbrella is:
+
+\begin{quote}
+\textbf{Threadwork: local-first resolvers for biological names, identifiers, ontologies, and curation workflows.}
+\end{quote}
+
+The strategic shift is:
+
+\begin{center}
+\code{taxon-weaver} $\rightarrow$ first concrete module in a broader \code{threadwork} ecosystem.
+\end{center}
+
+This does \textbf{not} mean making all biological logic generic. That would be a mistake. Taxonomy, MeSH, Gene Ontology, protein accessions, gene symbols, and protein domains all have different source formats, ambiguity patterns, aliases, and matching policies.
+
+The correct professional design is:
+
+\begin{quote}
+\textbf{Every Weaver module should feel identical to call, but remain domain-specific internally.}
+\end{quote}
+
+Therefore, Threadwork should standardize:
+
+\begin{itemize}
+  \item request/result/decision contracts;
+  \item statuses, warnings, and match types;
+  \item resolver metadata and provenance;
+  \item batch behavior;
+  \item reviewed decision handling;
+  \item progress events;
+  \item CLI conventions;
+  \item compatibility checks;
+  \item contract test suites.
+\end{itemize}
+
+But Threadwork should \textbf{not} force all modules to share:
+
+\begin{itemize}
+  \item the same database schema;
+  \item the same fuzzy matching algorithm;
+  \item the same normalization rules;
+  \item the same ontology traversal rules;
+  \item the same ambiguity policy.
+\end{itemize}
+
+The recommended implementation route is to create a small \code{threadwork-core} package containing only the generic contracts, enums, metadata, protocols, progress events, and test utilities. Then \code{taxon-weaver} should be refactored to implement those contracts while keeping taxonomy-specific logic inside its own package. After that, \code{mesh-weaver} should be built as the second real module, because ORDINA needs disease normalization and because a second module will test whether the abstraction is truly useful.
+
+% -----------------------------------------------------------------------------
+\section{Current state of Taxon Weaver}
+% -----------------------------------------------------------------------------
+
+\code{taxon-weaver} is already more than a single-purpose script. It is a local-first resolver package for NCBI taxonomy names. The current design includes:
+
+\begin{itemize}
+  \item a reusable core library;
+  \item a thin command-line interface;
+  \item local SQLite reference database construction from NCBI taxdump files;
+  \item exact scientific-name lookup;
+  \item synonym lookup;
+  \item normalized-name lookup;
+  \item transform-assisted fallback;
+  \item supervised fuzzy suggestions;
+  \item lineage retrieval;
+  \item reviewed mapping persistence;
+  \item conservative cache reuse;
+  \item stable dataclass contracts;
+  \item JSON-ready outputs;
+  \item build metadata for reproducibility.
+\end{itemize}
+
+The important design lesson is that a resolver should behave like a local API even when imported directly as a Python package. That means downstream applications can call the resolver through structured contracts instead of depending on implementation details.
+
+\begin{Verbatim}[fontsize=\small]
+Downstream application
+  -> ResolveRequest
+  -> Weaver module
+  -> ResolveResult
+\end{Verbatim}
+
+This is the right pattern for ORDINA, CLI workflows, Celery workers, Django services, local scripts, and future HTTP APIs.
+
+% -----------------------------------------------------------------------------
+\section{Why Threadwork should exist}
+% -----------------------------------------------------------------------------
+
+Without a shared contract, every future resolver will repeat the same design decisions:
+
+\begin{itemize}
+  \item How does a caller ask for a value to be resolved?
+  \item How are exact, synonym, normalized, fuzzy, ambiguous, and unresolved matches represented?
+  \item How are candidates represented?
+  \item How are warnings stored?
+  \item How does a curator confirm or reject a candidate?
+  \item How are prior decisions reused?
+  \item How is source-build metadata recorded?
+  \item How does a downstream application know whether a result can be auto-accepted?
+\end{itemize}
+
+If \code{taxon-weaver}, \code{mesh-weaver}, \code{go-weaver}, and future modules solve these questions differently, ORDINA will accumulate one-off adapters. That would make the broader system harder to maintain and harder to test.
+
+Threadwork should exist to define the common resolver language. Each Weaver module should still own its biological logic, but all modules should present the same outer interface.
+
+% -----------------------------------------------------------------------------
+\section{Proposed ecosystem}
+% -----------------------------------------------------------------------------
+
+The proposed package family is:
+
+\begin{Verbatim}[fontsize=\small]
+threadwork-core    Generic contracts, protocols, metadata, test helpers
+threadwork         Optional umbrella package / compatibility bundle
+
+taxon-weaver       NCBI taxonomy resolver
+mesh-weaver        MeSH disease/medical descriptor resolver
+go-weaver          Gene Ontology resolver
+domain-weaver      Protein domain resolver, e.g. Pfam/InterPro-like sources
+protein-weaver     Protein/accession resolver, e.g. UniProt-like sources
+gene-weaver        Gene symbol/identifier resolver
+\end{Verbatim}
+
+The relationship should be:
+
+\begin{Verbatim}[fontsize=\small]
+threadwork-core
+  provides contracts and interfaces
+
+individual Weaver modules
+  implement those interfaces using source-specific logic
+
+threadwork umbrella package
+  optionally installs compatible sets of Weaver modules
+\end{Verbatim}
+
+For ORDINA, this gives a clean normalization layer:
+
+\begin{Verbatim}[fontsize=\small]
+ORDINA Import Worker
+  -> Threadwork ResolveRequest
+  -> taxon-weaver / mesh-weaver / go-weaver
+  -> Threadwork ResolveResult
+  -> candidate evidence / review queue / canonical entity link
+\end{Verbatim}
+
+% -----------------------------------------------------------------------------
+\section{Core Threadwork contract}
+% -----------------------------------------------------------------------------
+
+The current Taxon Weaver contracts are a strong starting point, but they use taxonomy-specific field names. The shared contract should be generic.
+
+\subsection{Generic request}
+
+\begin{Verbatim}[fontsize=\small]
+ResolveRequest
+  original_value: str
+  namespace: str
+  provided_type: str | None
+  allow_fuzzy: bool
+  source: dict
+  context: dict
+  options: dict
+\end{Verbatim}
+
+For Taxon Weaver:
+
+\begin{Verbatim}[fontsize=\small]
+original_value  -> organism name as written
+provided_type   -> provided taxonomic rank, e.g. species/genus/family
+namespace       -> ncbi_taxonomy
+\end{Verbatim}
+
+For MeSH Weaver:
+
+\begin{Verbatim}[fontsize=\small]
+original_value  -> disease phrase
+provided_type   -> descriptor/category if known
+namespace       -> mesh
+\end{Verbatim}
+
+For GO Weaver:
+
+\begin{Verbatim}[fontsize=\small]
+original_value  -> GO label, synonym, or GO identifier
+provided_type   -> biological_process/molecular_function/cellular_component
+namespace       -> gene_ontology
+\end{Verbatim}
+
+\subsection{Generic result}
+
+\begin{Verbatim}[fontsize=\small]
+ResolveResult
+  original_value: str
+  normalized_value: str
+  namespace: str
+
+  status: ResolutionStatus
+  review_required: bool
+  auto_accept: bool
+  match_type: MatchType
+  warnings: list[WarningCode]
+
+  matched_id: str | None
+  matched_label: str | None
+  matched_type: str | None
+  score: float | None
+
+  candidates: list[CandidateMatch]
+  ancestry: list[AncestryEntry]
+  aliases: list[AliasEntry]
+
+  cache_applied: bool
+  resolver: ResolverMetadata
+  metadata: dict
+\end{Verbatim}
+
+For taxonomy:
+
+\begin{Verbatim}[fontsize=\small]
+matched_id       -> NCBI TaxID
+matched_label    -> scientific name
+matched_type     -> rank
+ancestry         -> lineage
+aliases          -> synonyms / alternative names
+\end{Verbatim}
+
+\subsection{Candidate match}
+
+\begin{Verbatim}[fontsize=\small]
+CandidateMatch
+  entity_id: str
+  label: str
+  entity_type: str | None
+  namespace: str
+  match_type: MatchType
+  score: float | None
+  ancestry: list[AncestryEntry]
+  aliases: list[AliasEntry]
+  warnings: list[WarningCode]
+  metadata: dict
+\end{Verbatim}
+
+\subsection{Ancestry entry}
+
+Taxonomy has lineage. GO has ontology parents. MeSH has tree positions. Protein/domain systems may have cross-reference chains. A shared term like \code{ancestry} is more general than \code{lineage}.
+
+\begin{Verbatim}[fontsize=\small]
+AncestryEntry
+  entity_id: str
+  label: str
+  entity_type: str | None
+  relationship: str | None
+  depth: int | None
+  metadata: dict
+\end{Verbatim}
+
+For taxonomy, \code{relationship} can be \code{parent}. For GO, it may be \code{is_a} or \code{part_of}. For MeSH, it may be \code{tree_parent}.
+
+\subsection{Decision record}
+
+\begin{Verbatim}[fontsize=\small]
+DecisionRecord
+  action: DecisionAction
+  original_value: str
+  normalized_value: str
+  provided_type: str | None
+  namespace: str
+  source_version: str
+  reviewer: str | None
+
+  resolved_id: str | None
+  resolved_label: str | None
+  resolved_type: str | None
+
+  match_type: MatchType
+  status: ResolutionStatus
+  score: float | None
+  warnings: list[WarningCode]
+  notes: str | None
+  created_at: str
+\end{Verbatim}
+
+This lets all Weaver modules share the same review and cache logic.
+
+% -----------------------------------------------------------------------------
+\section{Shared resolver interface}
+% -----------------------------------------------------------------------------
+
+Every Weaver module should expose the same service methods:
+
+\begin{Verbatim}[fontsize=\small]
+class ResolverService:
+    def resolve_one(request: ResolveRequest) -> ResolveResult: ...
+    def resolve_batch(request: BatchResolveRequest) -> BatchResolveResult: ...
+    def get_ancestry(entity_id: str) -> list[AncestryEntry]: ...
+    def get_build_info() -> BuildInfo: ...
+    def record_decision(decision: DecisionRecord) -> None: ...
+    def close() -> None: ...
+\end{Verbatim}
+
+The implementation can be domain-specific, but the interface should not be.
+
+% -----------------------------------------------------------------------------
+\section{Professional design solutions for current problems}
+% -----------------------------------------------------------------------------
+
+\subsection{Problem: taxonomy-specific contracts}
+
+The current names are readable for taxonomy but should not become the generic standard.
+
+\textbf{Solution:} define generic Threadwork contracts and preserve taxonomy aliases.
+
+\begin{longtable}{p{0.35\linewidth}p{0.55\linewidth}}
+\toprule
+\textbf{Taxon Weaver concept} & \textbf{Threadwork concept} \\
+\midrule
+\endhead
+\code{original\_name} & \code{original\_value} \\
+\code{normalized\_name} & \code{normalized\_value} \\
+\code{provided\_level} & \code{provided\_type} \\
+\code{matched\_taxid} & \code{matched\_id} \\
+\code{matched\_name} & \code{matched\_label} \\
+\code{matched\_rank} & \code{matched\_type} \\
+\code{lineage} & \code{ancestry} \\
+\code{taxonomy\_build\_version} & \code{source\_version} \\
+\bottomrule
+\end{longtable}
+
+Taxon-specific aliases can remain available for ergonomics, but new downstream code should depend on the generic contract.
+
+\subsection{Problem: reference data and reviewed decisions are mixed}
+
+Reference data and reviewed decisions have different lifecycles. Reference data is rebuilt from source dumps. Reviewed decisions are user/application state.
+
+\textbf{Solution:} split storage into a read-mostly \code{ReferenceStore} and a writable \code{DecisionStore}.
+
+\begin{Verbatim}[fontsize=\small]
+ReferenceStore
+  exact_lookup(...)
+  alias_lookup(...)
+  normalized_lookup(...)
+  get_ancestry(...)
+  get_aliases(...)
+  get_build_info(...)
+  check_compatibility(...)
+
+DecisionStore
+  lookup(...)
+  record(...)
+\end{Verbatim}
+
+For the MVP, both stores may be SQLite. The key improvement is that they are separate responsibilities.
+
+\subsection{Problem: implicit global database path}
+
+A global default database path is convenient for small scripts but risky in tests, workers, web servers, and long-lived applications.
+
+\textbf{Solution:} require an explicit resolver context in library code.
+
+\begin{Verbatim}[fontsize=\small]
+ResolverContext
+  reference_path: Path
+  decision_path: Path | None
+  namespace: str
+  read_only_reference: bool
+  options: dict
+\end{Verbatim}
+
+The CLI can still infer paths from command-line arguments or environment variables, but the core library should prefer explicit dependencies.
+
+\subsection{Problem: service construction initializes or mutates databases}
+
+A resolver service should not silently create or mutate a reference database when it is opened.
+
+\textbf{Solution:} separate build, validate, runtime, and decision phases.
+
+\begin{Verbatim}[fontsize=\small]
+Build phase:
+  create reference database from source files
+
+Validate phase:
+  check schema version, source version, indexes, and metadata
+
+Runtime phase:
+  open reference database read-only and resolve values
+
+Decision phase:
+  write user decisions to a separate decision store
+\end{Verbatim}
+
+A professional API should look like:
+
+\begin{Verbatim}[fontsize=\small]
+TaxonReferenceBuilder.build(...)
+TaxonReferenceStore.open_readonly(...)
+TaxonReferenceStore.validate()
+TaxonResolverService(reference_store=..., decision_store=...)
+\end{Verbatim}
+
+\subsection{Problem: build version mixes source identity and build instance}
+
+A timestamped build version can make decision reuse stricter than necessary if the same source dump is rebuilt on a different date.
+
+\textbf{Solution:} split version concepts.
+
+\begin{Verbatim}[fontsize=\small]
+source_version
+  identity of the external source data
+  example: ncbi-taxdump-sha256:<hash>
+
+schema_version
+  identity of the local reference schema
+  example: taxon-reference-schema-v2
+
+resolver_version
+  software package version
+  example: taxon-weaver 0.2.0
+
+policy_version
+  identity of matching/review policy
+  example: taxon-resolution-policy-v1
+
+build_instance_id
+  timestamp/environment of this specific DB build
+\end{Verbatim}
+
+Decision reuse should depend mostly on:
+
+\begin{Verbatim}[fontsize=\small]
+namespace + normalized_value + provided_type + source_version + policy_version
+\end{Verbatim}
+
+not only on a timestamped build ID.
+
+\subsection{Problem: fuzzy logic is domain-specific}
+
+Taxon Weaver fuzzy matching is correctly optimized for scientific names, ranks, and taxonomy-like strings. That logic should not become the default for all Threadwork modules.
+
+\textbf{Solution:} define a fuzzy strategy interface.
+
+\begin{Verbatim}[fontsize=\small]
+class FuzzyStrategy:
+    def suggest(
+        request: ResolveRequest,
+        store: ReferenceStore,
+    ) -> list[CandidateMatch]: ...
+\end{Verbatim}
+
+Then each module implements its own strategy:
+
+\begin{itemize}
+  \item \code{TaxonFuzzyStrategy}: scientific names, synonyms, ranks, genus/species token behavior;
+  \item \code{MeshFuzzyStrategy}: disease descriptors, entry terms, abbreviations;
+  \item \code{GOFuzzyStrategy}: GO labels, synonyms, ontology branch constraints;
+  \item \code{ProteinFuzzyStrategy}: accessions, gene symbols, protein names.
+\end{itemize}
+
+Threadwork should standardize the result shape, not the biological scoring logic.
+
+\subsection{Problem: untyped progress callbacks}
+
+Build progress should be useful for CLI output, Celery task progress, web dashboards, logs, and future APIs.
+
+\textbf{Solution:} use typed progress events.
+
+\begin{Verbatim}[fontsize=\small]
+ProgressEvent
+  stage: str
+  message: str
+  current: int | None
+  total: int | None
+  final: bool
+  severity: str
+  metadata: dict
+\end{Verbatim}
+
+This fits future ORDINA workers because the same event can update a Celery job, a database status row, or a web UI.
+
+\subsection{Problem: weak compatibility boundaries}
+
+Reference stores and decision stores need different compatibility policies.
+
+\textbf{Solution:} add explicit compatibility reports.
+
+\begin{Verbatim}[fontsize=\small]
+CompatibilityReport
+  ok: bool
+  schema_version: str
+  expected_schema_version: str
+  source_version: str
+  warnings: list[str]
+  errors: list[str]
+\end{Verbatim}
+
+Recommended policy:
+
+\begin{itemize}
+  \item if a reference schema is incompatible, rebuild the reference database from source;
+  \item if a decision schema is incompatible, migrate carefully;
+  \item user decisions are not reproducible, so they deserve more care than reference data;
+  \item the resolver should fail clearly rather than guessing.
+\end{itemize}
+
+\subsection{Problem: inconsistent package and import naming}
+
+A professional ecosystem should have predictable package names.
+
+\textbf{Solution:} define canonical names and compatibility imports.
+
+Canonical names:
+
+\begin{Verbatim}[fontsize=\small]
+threadwork_core
+taxon_weaver
+taxon_weaver_cli
+mesh_weaver
+go_weaver
+domain_weaver
+protein_weaver
+gene_weaver
+\end{Verbatim}
+
+Canonical import:
+
+\begin{Verbatim}[fontsize=\small]
+from threadwork_core import ResolveRequest
+from taxon_weaver import TaxonResolverService
+\end{Verbatim}
+
+Compatibility import:
+
+\begin{Verbatim}[fontsize=\small]
+from taxonomy_resolver import ResolveRequest, TaxonomyResolverService
+\end{Verbatim}
+
+Compatibility imports can remain for a while, but new code should use the new names.
+
+\subsection{Problem: resolver provenance is not explicit enough}
+
+ORDINA and similar downstream systems need to know which resolver produced a match, using which source data and which policy.
+
+\textbf{Solution:} add resolver metadata to every result.
+
+\begin{Verbatim}[fontsize=\small]
+ResolverMetadata
+  resolver_id: str
+  resolver_version: str
+  namespace: str
+  source_name: str
+  source_version: str
+  schema_version: str
+  policy_version: str
+\end{Verbatim}
+
+Example:
+
+\begin{Verbatim}[fontsize=\small]
+{
+  "resolver_id": "taxon-weaver",
+  "resolver_version": "0.2.0",
+  "namespace": "ncbi_taxonomy",
+  "source_name": "NCBI taxdump",
+  "source_version": "sha256:...",
+  "schema_version": "taxon-reference-v2",
+  "policy_version": "taxon-resolution-policy-v1"
+}
+\end{Verbatim}
+
+This allows ORDINA to keep scientific provenance instead of only storing the final matched identifier.
+
+% -----------------------------------------------------------------------------
+\section{Professional service composition}
+% -----------------------------------------------------------------------------
+
+The most professional runtime pattern is dependency composition:
+
+\begin{Verbatim}[fontsize=\small]
+resolver = TaxonResolverService(
+    reference_store=TaxonReferenceStore.open_readonly(reference_path),
+    decision_store=SQLiteDecisionStore(decision_path),
+    normalizer=TaxonNormalizer(),
+    fuzzy_strategy=TaxonFuzzyStrategy(),
+    policy=TaxonResolutionPolicy(),
+)
+\end{Verbatim}
+
+A convenience constructor can still exist:
+
+\begin{Verbatim}[fontsize=\small]
+resolver = TaxonResolverService.from_paths(
+    reference_path="data/ncbi_taxonomy.sqlite",
+    decision_path="data/taxon_decisions.sqlite",
+)
+\end{Verbatim}
+
+The important rule is that the simple constructor should be a wrapper over explicit components, not the only design.
+
+% -----------------------------------------------------------------------------
+\section{Recommended package structure}
+% -----------------------------------------------------------------------------
+
+A cleaner package layout would be:
+
+\begin{Verbatim}[fontsize=\small]
+threadwork-core/
+  src/threadwork_core/
+    contracts.py
+    enums.py
+    protocols.py
+    metadata.py
+    serialization.py
+    progress.py
+    errors.py
+    testing.py
+
+taxon-weaver/
+  src/taxon_weaver/
+    service.py
+    reference_store.py
+    decision_store.py
+    builder.py
+    normalize.py
+    exact.py
+    fuzzy.py
+    transforms.py
+    policy.py
+    lineage.py
+    manifest.py
+
+  src/taxon_weaver_cli/
+    cli.py
+    build_reference.py
+    resolve_one.py
+    resolve_batch.py
+    inspect_entity.py
+    apply_decisions.py
+
+  tests/
+    test_contract_shape.py
+    test_exact_resolution.py
+    test_fuzzy_resolution.py
+    test_decision_reuse.py
+    test_reference_build.py
+\end{Verbatim}
+
+The goal is to prevent generic contracts, CLI logic, source-building logic, taxonomy-specific policy, and decision persistence from drifting together.
+
+% -----------------------------------------------------------------------------
+\section{Monorepo and release strategy}
+% -----------------------------------------------------------------------------
+
+Threadwork can contain many packages in one repository. This is a normal and professional approach when several packages share a contract and are expected to evolve together.
+
+\subsection{Recommended monorepo layout}
+
+\begin{Verbatim}[fontsize=\small]
+threadwork/
+  packages/
+    threadwork-core/
+      pyproject.toml
+      src/threadwork_core/
+
+    taxon-weaver/
+      pyproject.toml
+      src/taxon_weaver/
+      src/taxon_weaver_cli/
+
+    mesh-weaver/
+      pyproject.toml
+      src/mesh_weaver/
+      src/mesh_weaver_cli/
+
+    go-weaver/
+      pyproject.toml
+      src/go_weaver/
+      src/go_weaver_cli/
+
+    threadwork/
+      pyproject.toml
+      src/threadwork/
+
+  docs/
+    architecture.md
+    contracts.md
+    release-policy.md
+
+  examples/
+    ordina_integration/
+    cli_examples/
+
+  tests/
+    integration/
+    contract/
+\end{Verbatim}
+
+Each package has its own \code{pyproject.toml}. That means each package can be built, versioned, tested, and released independently.
+
+\subsection{Individual package releases}
+
+Each Weaver can have its own independent release:
+
+\begin{Verbatim}[fontsize=\small]
+threadwork-core 0.3.0
+taxon-weaver    0.4.1
+mesh-weaver     0.1.0
+go-weaver       0.1.0
+\end{Verbatim}
+
+This is useful because the modules will not mature at the same speed. Taxon Weaver may become stable before MeSH Weaver, while GO Weaver may need several schema revisions.
+
+A downstream project such as ORDINA could depend only on what it needs:
+
+\begin{Verbatim}[fontsize=\small]
+ordina dependencies:
+  threadwork-core >=0.3,<0.4
+  taxon-weaver >=0.4,<0.5
+  mesh-weaver >=0.1,<0.2
+\end{Verbatim}
+
+\subsection{Umbrella package release}
+
+Threadwork can also provide a convenience package:
+
+\begin{Verbatim}[fontsize=\small]
+threadwork
+\end{Verbatim}
+
+This package should not duplicate code. It should depend on compatible versions of the individual packages.
+
+Example:
+
+\begin{Verbatim}[fontsize=\small]
+threadwork 0.2.0
+  depends on:
+    threadwork-core >=0.3,<0.4
+    taxon-weaver >=0.4,<0.5
+    mesh-weaver >=0.1,<0.2
+    go-weaver >=0.1,<0.2
+\end{Verbatim}
+
+Users who want everything can install:
+
+\begin{Verbatim}[fontsize=\small]
+pip install threadwork
+\end{Verbatim}
+
+Users who only need taxonomy can install:
+
+\begin{Verbatim}[fontsize=\small]
+pip install taxon-weaver
+\end{Verbatim}
+
+\subsection{Optional extras}
+
+Another good pattern is optional extras:
+
+\begin{Verbatim}[fontsize=\small]
+pip install threadwork[taxon]
+pip install threadwork[mesh]
+pip install threadwork[go]
+pip install threadwork[all]
+\end{Verbatim}
+
+A possible umbrella package configuration:
+
+\begin{Verbatim}[fontsize=\small]
+[project.optional-dependencies]
+taxon = ["taxon-weaver>=0.4,<0.5"]
+mesh = ["mesh-weaver>=0.1,<0.2"]
+go = ["go-weaver>=0.1,<0.2"]
+all = [
+  "taxon-weaver>=0.4,<0.5",
+  "mesh-weaver>=0.1,<0.2",
+  "go-weaver>=0.1,<0.2",
+]
+\end{Verbatim}
+
+\subsection{Release models}
+
+There are two realistic release models.
+
+\subsubsection{Model A: independent versioning}
+
+Each package has its own version:
+
+\begin{Verbatim}[fontsize=\small]
+threadwork-core 0.3.0
+taxon-weaver    0.4.1
+mesh-weaver     0.1.0
+threadwork      0.2.0
+\end{Verbatim}
+
+Pros:
+
+\begin{itemize}
+  \item flexible;
+  \item avoids releasing unchanged packages;
+  \item better when modules mature at different speeds.
+\end{itemize}
+
+Cons:
+
+\begin{itemize}
+  \item dependency compatibility must be documented carefully;
+  \item release automation is slightly more complex.
+\end{itemize}
+
+\subsubsection{Model B: lockstep versioning}
+
+All packages share the same version:
+
+\begin{Verbatim}[fontsize=\small]
+threadwork-core 0.4.0
+taxon-weaver    0.4.0
+mesh-weaver     0.4.0
+threadwork      0.4.0
+\end{Verbatim}
+
+Pros:
+
+\begin{itemize}
+  \item easy to understand;
+  \item simple compatibility story.
+\end{itemize}
+
+Cons:
+
+\begin{itemize}
+  \item forces releases of unchanged packages;
+  \item awkward when one module is experimental and another is stable.
+\end{itemize}
+
+\subsection{Recommendation}
+
+Use \textbf{independent package versioning}, with an umbrella \code{threadwork} release that pins compatible package ranges.
+
+Recommended policy:
+
+\begin{itemize}
+  \item \code{threadwork-core} follows semantic versioning strictly;
+  \item each Weaver module declares which \code{threadwork-core} version range it supports;
+  \item the umbrella \code{threadwork} package is a convenience compatibility bundle;
+  \item breaking contract changes require a new major or minor line in \code{threadwork-core};
+  \item ORDINA should depend on explicit package ranges, not floating latest versions.
+\end{itemize}
+
+% -----------------------------------------------------------------------------
+\section{Testing standard}
+% -----------------------------------------------------------------------------
+
+Threadwork should have contract tests, not only behavior tests. If ORDINA depends on a field, that field should be covered by a contract test.
+
+Minimum test set:
+
+\begin{itemize}
+  \item every result serializes cleanly to JSON;
+  \item every status is documented;
+  \item every warning is documented;
+  \item exact match result shape is stable;
+  \item synonym match result shape is stable;
+  \item fuzzy suggestion result shape is stable;
+  \item unresolved result shape is stable;
+  \item cached decision result shape is stable;
+  \item compatibility imports still work;
+  \item reference-store compatibility checks fail clearly;
+  \item decision reuse does not depend only on timestamped build IDs;
+  \item each Weaver module passes the shared Threadwork contract test suite.
+\end{itemize}
+
+% -----------------------------------------------------------------------------
+\section{Implementation roadmap}
+% -----------------------------------------------------------------------------
+
+\subsection{Phase 1: Freeze current Taxon Weaver behavior}
+
+Before extracting anything, freeze the current behavior with tests.
+
+Deliverables:
+
+\begin{itemize}
+  \item contract-shape tests for current results;
+  \item examples for exact, synonym, normalized, fuzzy, unresolved, cached, and decision cases;
+  \item documented compatibility expectations.
+\end{itemize}
+
+\subsection{Phase 2: Draft Threadwork contracts}
+
+Create a design document defining:
+
+\begin{itemize}
+  \item generic dataclasses;
+  \item statuses;
+  \item warnings;
+  \item resolver interface;
+  \item reference-store interface;
+  \item decision-store interface;
+  \item build metadata;
+  \item compatibility rules.
+\end{itemize}
+
+\subsection{Phase 3: Create \code{threadwork-core}}
+
+Start small. The first version should contain only:
+
+\begin{itemize}
+  \item contracts;
+  \item enums;
+  \item protocols;
+  \item metadata models;
+  \item progress events;
+  \item serialization helpers;
+  \item test helpers.
+\end{itemize}
+
+It should not contain taxonomy logic.
+
+\subsection{Phase 4: Adapt Taxon Weaver to implement Threadwork}
+
+Taxon Weaver should import \code{threadwork-core} and map taxonomy fields to generic fields.
+
+Deliverables:
+
+\begin{itemize}
+  \item \code{TaxonResolverService} implementing the generic resolver interface;
+  \item compatibility aliases for old Taxon Weaver field names;
+  \item unchanged CLI behavior where possible;
+  \item contract compatibility tests.
+\end{itemize}
+
+\subsection{Phase 5: Split reference and decision stores}
+
+Refactor storage into:
+
+\begin{itemize}
+  \item \code{TaxonomyReferenceStore};
+  \item \code{SQLiteDecisionStore};
+  \item explicit read-only reference opening;
+  \item explicit decision-store initialization.
+\end{itemize}
+
+\subsection{Phase 6: Add provenance metadata to every result}
+
+Every result should include:
+
+\begin{itemize}
+  \item resolver ID;
+  \item resolver version;
+  \item namespace;
+  \item source name;
+  \item source version;
+  \item schema version;
+  \item policy version.
+\end{itemize}
+
+\subsection{Phase 7: Build MeSH Weaver as the second module}
+
+MeSH Weaver is the best second module because ORDINA needs disease normalization. It will also reveal whether the Threadwork abstraction is real or accidentally taxonomy-specific.
+
+Deliverables:
+
+\begin{itemize}
+  \item MeSH reference builder;
+  \item descriptor/entry-term resolver;
+  \item same Threadwork contract;
+  \item simple CLI;
+  \item ORDINA integration proof of concept.
+\end{itemize}
+
+\subsection{Phase 8: Optimize shared performance after two modules exist}
+
+Do not over-engineer Threadwork before a second module exists. Once Taxon Weaver and MeSH Weaver both use the contract, optimize shared pieces.
+
+Possible targets:
+
+\begin{itemize}
+  \item batch resolution streaming;
+  \item shared SQLite connection handling;
+  \item optional multiprocessing for large batches;
+  \item shared progress events;
+  \item shared test fixtures;
+  \item optional full-text-search experiments where justified.
+\end{itemize}
+
+% -----------------------------------------------------------------------------
+\section{What should not be done}
+% -----------------------------------------------------------------------------
+
+Avoid these traps:
+
+\begin{itemize}
+  \item Do not rewrite Taxon Weaver from scratch before freezing the current contract.
+  \item Do not make \code{threadwork-core} depend on taxonomy concepts.
+  \item Do not force all modules to use identical database schemas.
+  \item Do not build a microservice before the package interface is stable.
+  \item Do not let ORDINA query domain-specific reference tables directly.
+  \item Do not optimize a generic fuzzy algorithm before each domain has its own policy.
+  \item Do not use the umbrella \code{threadwork} package as the only installation path.
+\end{itemize}
+
+% -----------------------------------------------------------------------------
+\section{Final recommendation}
+% -----------------------------------------------------------------------------
+
+Taxon Weaver should remain the first concrete Weaver module, but it should no longer be the only design target. The best next move is to turn its strongest design ideas into a generic Threadwork contract while keeping taxonomy-specific behavior inside Taxon Weaver.
+
+The practical path is:
+
+\begin{enumerate}
+  \item keep Taxon Weaver working;
+  \item create \code{threadwork-core} with contracts and protocols only;
+  \item adapt Taxon Weaver to implement those contracts;
+  \item split reference storage from decision storage;
+  \item add resolver/source/schema/policy provenance;
+  \item use a monorepo with independently versioned packages;
+  \item add an umbrella \code{threadwork} package for convenience;
+  \item build MeSH Weaver as the second real module;
+  \item use ORDINA as the first serious downstream integration.
+\end{enumerate}
+
+The guiding principle should remain:
+
+\begin{quote}
+\textbf{same outer interface, different inner biology.}
+\end{quote}
+
+\end{document}
